@@ -2,7 +2,7 @@ import htmlDomApi from './domApi'
 import vnode, {isVnode, isSameVnode} from "./vnode";
 import {isArray, isPrimitive} from './utils'
 
-const hooks = ['pre', 'create', 'update', 'destroy', 'remove', 'post']
+const hooks = ['create', 'update']
 const emptyNode = vnode('', '', {}, [], undefined, undefined)
 
 // 返回 key 和下标的映射
@@ -43,27 +43,10 @@ export default function init(modules = [], domApi) {
                     [], undefined, elm)
     }
 
-    function createRmCb(childElm, listeners) {
-        return function () {
-            // listeners = 1 才执行
-            if (--listeners === 0) {
-                // dom api里没有removeFromParent
-                api.removeChild(api.parentNode(childElm), childElm)
-            }
-        }
-    }
 
-    function createElm(vnode, insertedVnodeQueue) {
-        let data = vnode.data
-        let hook
-        if (data) {
-            if (data.hook && (hook = data.hook.init)) {
-                hook(vnode) // hook中的构造函数
-                data = vnode.data
-            }
-        } else {
-            data = {}
-        }
+
+    function createElm(vnode) {
+        let data = vnode.data || {}
 
         let children = vnode.children
         let type = vnode.type
@@ -86,18 +69,12 @@ export default function init(modules = [], domApi) {
             if (isArray(children)) {
                 children.forEach(ch => {
                     // 递归调用创建子elm
-                    ch && api.appendChild(elm, createElm(ch, insertedVnodeQueue))
+                    ch && api.appendChild(elm, createElm(ch))
                 })
             } else if (isPrimitive(vnode.text)) {
                 api.appendChild(elm, api.createTextNode(vnode.text))
             }
 
-            // 填充 insertedVnodeQueue
-            let datahook = vnode.data.hook
-            if (datahook) {
-                datahook.create && datahook.create(emptyNode, vnode)
-                datahook.insert && insertedVnodeQueue.push(vnode)
-            }
         } else {
             // 无type情况
             vnode.elm = api.createTextNode(vnode.text)
@@ -106,23 +83,6 @@ export default function init(modules = [], domApi) {
         return vnode.elm
     }
 
-    function invokeDestroyHook(vnode) {
-        let i, j
-        // ? 判断data是
-        if (vnode.data) {
-            for (i = 0; i < cbs.destroy.length; ++i) {
-                cbs.destroy[i](vnode)
-            }
-            if (vnode.children) {
-                for (j = 0; j < vnode.children.length; ++j) {
-                    let ch = vnode.children[j]
-                    if (ch && typeof ch !== 'string') {
-                        invokeDestroyHook(ch)
-                    }
-                }
-            }
-        }
-    }
 
     // 
     function removeVnode(parentElm, vnodes, startIdx, endIdx) {
@@ -133,18 +93,8 @@ export default function init(modules = [], domApi) {
             let i
             if (ch != null) {
                 if (ch.type) {
-                    invokeDestroyHook(ch)
-                    listeners = cbs.remove.length + 1
-                    rm = createRmCb(ch.elm, listeners)
-                    for (i = 0; i < cbs.remove.length; ++i) {
-                        cbs.remove[i](ch, rm)
-                    }
-                    // 链式判断。hook的设计是咋想的？
-                    if ((i = ch.data) && (i = i.hook) && (i = i.remove)) {
-                        i(ch, rm)
-                    } else {
-                        rm()
-                    }
+                    // 原始代码太复杂，换简单的方案
+                    api.removeChild(api.parentNode(ch.elm), ch.elm)
                 } else {
                     api.removeChild(parentElm, ch.elm)
                 }
@@ -152,16 +102,16 @@ export default function init(modules = [], domApi) {
         } 
     }
 
-    function addVnodes(parentElm, beforeElm, vnodes, startIdx, endIdx, insertedVnodeQueue) {
+    function addVnodes(parentElm, beforeElm, vnodes, startIdx, endIdx) {
         for (; startIdx <= endIdx; ++startIdx) {
             const ch = vnodes[startIdx]
             if (ch != null) {
-                api.insertBefore(parentElm, createElm(ch, insertedVnodeQueue), beforeElm)
+                api.insertBefore(parentElm, createElm(ch), beforeElm)
             }
         }
     }
 
-    function updateChildren(parentElm, oldCh, newCh, insertedVnodeQueue) {
+    function updateChildren(parentElm, oldCh, newCh) {
         let oldStartIdx = 0, newStartIdx = 0
         let oldEndIdx = oldCh.length - 1
         let oldStartVnode = oldCh[0]
@@ -182,11 +132,11 @@ export default function init(modules = [], domApi) {
                 newEndVnode = newCh[--newEndIdx]
             } else if (isSameVnode(oldStartIdx, newStartVnode)) { // 1. oldStart和newStart相同
                 // 不移动dom，patch属性？ 
-                patchVnode(oldStartVnode, newStartVnode, insertedVnodeQueue)
+                patchVnode(oldStartVnode, newStartVnode)
                 oldStartVnode = oldCh[++oldStartIdx]
                 newStartVnode = newCh[++newStartIdx]
             } else if (isSameVnode(oldStartVnode, newEndVnode)) { // 3. 头等于尾，删掉所有后面的子节点？
-                patchVnode(oldStartVnode, newEndVnode, insertedVnodeQueue)
+                patchVnode(oldStartVnode, newEndVnode)
 
                 api.insertBefore(parentElm, oldStartVnode.elm, api.nextSibling(oldEndVnode.elm)) // 头移到尾
                 oldStartVnode = oldCh[++oldStartIdx]
@@ -206,15 +156,15 @@ export default function init(modules = [], domApi) {
                 idxInOld = oldKeyToIdx[newStartVnode.key]
                 if (idxInOld == null) {
                     // newStartVnode 不存在
-                    api.insertBefore(parentElm, createElm(newStartVnode, insertedVnodeQueue), oldStartVnode.elm)
+                    api.insertBefore(parentElm, createElm(newStartVnode), oldStartVnode.elm)
                     newStartVnode = newCh[++newStartIdx]
                 } else {
                     // 找到了
                     elmToMove = oldCh[idxInOld]
                     if (elmToMove.type !== newStartVnode.type) { // type 不同，不能patch
-                        api.insertBefore(parentElm, createElm(newStartVnode, insertedVnodeQueue), oldStartVnode.elm)
+                        api.insertBefore(parentElm, createElm(newStartVnode), oldStartVnode.elm)
                     } else {
-                        patchVnode(elmToMove, newStartVnode, insertedVnodeQueue)
+                        patchVnode(elmToMove, newStartVnode)
                         oldCh[idxInOld] = undefined
                         api.insertBefore(parentElm, elmToMove.elm, oldStartVnode.elm) // 节省一次创建调用
                     }
@@ -225,14 +175,14 @@ export default function init(modules = [], domApi) {
 
         if (oldStartIdx > oldEndIdx) {
             before = newCh[newEndIdx+1] == null ? null : newCh[newEndIdx+1].elm
-            addVnodes(parentElm, before, newCh, newStartIdx, newEndIdx, insertedVnodeQueue)
+            addVnodes(parentElm, before, newCh, newStartIdx, newEndIdx)
         } else if (newStartIdx > newEndIdx) {
             // 删除多余的oldCh
             removeVnode(parentElm, oldCh, oldStartIdx, oldEndIdx)
         }
     }
 
-    function patchVnode(oldVnode, vnode, insertedVnodeQueue) {
+    function patchVnode(oldVnode, vnode) {
         const elm = vnode.elm = oldVnode.elm
         let oldCh = oldVnode.children
         let ch = vnode.children
@@ -248,13 +198,13 @@ export default function init(modules = [], domApi) {
             if (oldCh && ch) {
                 if (oldCh !== ch) {
                     // 先处理子节点
-                    updateChildren(elm, oldCh, ch, insertedVnodeQueue)
+                    updateChildren(elm, oldCh, ch)
                 }
             } 
             // 添加新子节点
             else if (ch) {
                 if (oldVnode.text) api.setTextContent(elm, '')
-                addVnodes(elm, null, ch, 0, ch.length - 1, insertedVnodeQueue)
+                addVnodes(elm, null, ch, 0, ch.length - 1)
             }
             // 删除所有旧节点
             else if (oldCh) {
@@ -273,9 +223,7 @@ export default function init(modules = [], domApi) {
 
     return function patch(oldVnode, vnode) {
         let elm, parent
-        const insertedVnodeQueue = []
         let i
-        for (i = 0; i < cbs.pre.length; ++i) cbs.pre[i]()
 
         // oldVnode是elm
         if (!isVnode(oldVnode)) {
@@ -283,13 +231,13 @@ export default function init(modules = [], domApi) {
         }
 
         if (isSameVnode(oldVnode, vnode)) {
-            patchVnode(oldVnode, vnode, insertedVnodeQueue)
+            patchVnode(oldVnode, vnode)
         }
         else {
             elm = oldVnode.elm
             parent = api.parentNode(elm)
 
-            createElm(vnode, insertedVnodeQueue)
+            createElm(vnode)
 
             if (parent !== null) {
                 api.insertBefore(parent, vnode.elm, api.nextSibling(elm))

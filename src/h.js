@@ -14,7 +14,7 @@ function hasValidKey(config) {
 }
 
 function h(type, config, ...children) {
-    let key = null
+    let key = undefined
     const props = {}
     if (config) {
         if (hasValidKey(config)) {
