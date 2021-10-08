@@ -122,6 +122,7 @@ export default function init(modules = [], domApi) {
         let oldKeyToIdx, idxInOld, elmToMove, before
 
         while (oldStartIdx <= oldEndIdx && newStartIdx <= newEndIdx) {
+            // 判断很复杂，主要意图是从两边像中间靠拢计算，目的是尽量减少createElm的调用，以达到复用dom的目的
             if (oldStartVnode == null) {
                 oldStartVnode = oldCh[++oldStartIdx] // ? 0 = null
             } else if (oldEndVnode == null) {
@@ -142,7 +143,7 @@ export default function init(modules = [], domApi) {
                 oldStartVnode = oldCh[++oldStartIdx]
                 newEndVnode = newCh[--newEndIdx]
             } else if (isSameVnode(oldEndVnode, newStartVnode)) { // 4. 尾等于头
-                patchVnode(oldEndVnode)
+                patchVnode(oldEndVnode, newStartVnode)
                 
                 api.insertBefore(parentElm, oldEndVnode.elm, oldStartVnode.elm)
                 oldEndVnode = oldCh[--oldEndIdx]
